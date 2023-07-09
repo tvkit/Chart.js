@@ -168,11 +168,126 @@ module.exports = DatasetController.extend({
 		var rects = me.getMeta().data;
 		var i, ilen;
 
+		if (me._config.barThickness === "flex") {
+			me._ruler = me.getFluxRuler();
+
+			for (i = 0, ilen = rects.length; i < ilen; ++i) {
+				me.updateFluxElement(rects[i], i, reset);
+			}
+
+			return;
+		}
+
 		me._ruler = me.getRuler();
 
 		for (i = 0, ilen = rects.length; i < ilen; ++i) {
 			me.updateElement(rects[i], i, reset);
 		}
+	},
+
+	updateFluxElement: function(rectangle, index, reset) {
+		var me = this;
+		var meta = me.getMeta();
+		var dataset = me.getDataset();
+		var options = me._resolveDataElementOptions(rectangle, index);
+
+		rectangle._xScale = me.getScaleForId(meta.xAxisID);
+		rectangle._yScale = me.getScaleForId(meta.yAxisID);
+		rectangle._datasetIndex = me.index;
+		rectangle._index = index;
+		rectangle._model = {
+			backgroundColor: options.backgroundColor,
+			borderColor: options.borderColor,
+			borderSkipped: options.borderSkipped,
+			borderWidth: options.borderWidth,
+			datasetLabel: dataset.label,
+			label: me.chart.data.labels[index]
+		};
+
+		if (helpers.isArray(dataset.data[index])) {
+			rectangle._model.borderSkipped = null;
+		}
+
+		me._updateFluxElementGeometry(rectangle, index, reset, options);
+
+		rectangle.pivot();
+	},
+
+	_updateFluxElementGeometry: function(rectangle, index, reset, options) {
+		var me = this;
+		var model = rectangle._model;
+		var vscale = me._getValueScale();
+		var base = vscale.getBasePixel();
+		var horizontal = vscale.isHorizontal();
+		var ruler = me._ruler || me.getFluxRuler();
+		var vpixels = me.calculateBarValuePixels(me.index, index, options);
+		var ipixels = me.calculateBarIndexPixels(me.index, index, ruler, options);
+
+		model.horizontal = horizontal;
+		model.base = reset ? base : vpixels.base;
+		model.x = horizontal ? reset ? base : vpixels.head : ipixels.center;
+		model.y = horizontal ? ipixels.center : reset ? base : vpixels.head;
+		model.height = horizontal ? ipixels.size : undefined;
+		model.width = horizontal ? undefined : ipixels.size;
+
+		// const labelMeta = me.chart.data.labelMeta;
+		model.y = 0; //labelMeta && labelMeta.roof > 0 ? labelMeta.roof : model.y;
+		model.x = ruler.pixels[index];
+		model.width = ruler.widths[index];
+
+	},
+
+	getFluxRuler: function() {
+		var me = this;
+		var scale = me._getIndexScale();
+		var pixels = [];
+		var widths = [];
+		var i, ilen;
+
+		const data = me.getMeta().data;
+		if (data.length > 1) {
+			const getData = (i) => {
+				const d = data[i];
+				return me.chart.data.datasets[d._datasetIndex].data[d._index];
+			}
+			const start = getData(0);
+			const stop = getData(data.length-1);
+
+			const diff = stop.x - start.x;
+			const pstart = scale._startPixel;
+			const prange = scale._length;
+			const xpos = (x) => (x - start.x) / diff * prange + pstart;
+			let lastData = undefined;
+			for (i = 0, ilen = data.length; i < ilen; ++i) {
+				const d = getData(i);
+				if (d.y) {
+					lastData = d;
+				} else {
+					const x1 = xpos(d.x);
+					if (lastData) {
+						const x0 = xpos(lastData.x);
+						const width = x1 - x0;
+						if (width) {
+							pixels.push(x0 + (x1 - x0)/2);
+							widths.push(Math.max(x1 - x0, 10));
+						}
+						lastData = undefined;
+					} else {
+						pixels.push(x1);
+						widths.push(0);
+					}
+				}
+			}
+		}
+
+		return {
+			pixels: pixels,
+			widths,
+			start: scale._startPixel,
+			end: scale._endPixel,
+			stackCount: me.getStackCount(),
+			scale: scale
+		};
 	},
 
 	updateElement: function(rectangle, index, reset) {
